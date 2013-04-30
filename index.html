@@ -25,7 +25,7 @@
       <section>
         <h1>Creating a new domain on Windows Azure</h1>
 
-<p>I've spent a few hours in the past week getting a domain set up on Azure so I can do some testing for some software I'm writing to control directory sync with Office 365 (in particular, Azure Active Directory).  There's some guides out there that give you some tips, but I found some technical errors in them and they didn't detail the full solution end-to-end.  My approach had to be repeatable so it focuses on Powershell - you'll need the the Azure SDK to installed to run these steps.  For the record, joining a new Azure VM a domain is far, far easier using PS than the portal.  </p>
+<p>I've spent a few hours in the past week getting a domain set up on Azure with the aim of using it to test some integration tools.  There's some guides out there that give you tips, but I found a couple of technical errors, plus they didn't detail a full solution end-to-end.  My approach had to be repeatable so it uses Powershell - you'll need the the Azure SDK to installed to run these steps. </p>
 
 <h3>Creating the machine</h3>
 
@@ -57,6 +57,73 @@ $MyDC = New-AzureVMConfig -name $vmname -InstanceSize 'Small' -ImageName $image 
 
 New-AzureVM -ServiceName $vmname -AffinityGroup $AG -VMs $MyDC -DnsSettings $myDNS -VNetName $vnet
 </code></pre>
+
+<p>Your domain controller should now be spinning up - when it's done, you should install the AD DS role.  The walk though is here <a href="http://technet.microsoft.com/en-us/library/hh472162.aspx">http://technet.microsoft.com/en-us/library/hh472162.aspx</a>.  The easiest way is probably with Server Manager.</p>
+
+<h3>Creating a joined machine</h3>
+
+<p>Now that's set up, we can create a new machine and join it to the domain.  </p>
+
+<pre><code>#Deploy a new VM and join it to the domain
+#-------------------------------------------
+#Specify my DC's DNS IP
+$myDNS = New-AzureDNS -Name 'MyThrowawayInternalDnsName' -IPAddress '{vnet ipv4 address of my DC}'
+
+
+# OS Image to Use
+$image = 'a699494373c04fc0bc8f2bb1389d6106__Windows-Server-2012-Datacenter-201303.01-en.us-127GB.vhd'
+$admin = '{my domain admin}'
+$pwd = '{my domain admin password}'
+$size = 'Small'
+
+
+#VM Configuration
+$vmname = '{my domain machine}'
+$MyVM1 = New-AzureVMConfig -name $vmname -InstanceSize $size -ImageName $image |
+    Add-AzureProvisioningConfig -WindowsDomain -Password $pwd -Domain '{my domain}.com' -DomainPassword $pwd -DomainUserName $admin -JoinDomain '{my domain}.com'|
+    Set-AzureSubnet -SubnetNames '{subnet name}'
+
+
+New-AzureVM -ServiceName $vmname -AffinityGroup $AG -VMs $MyVM1 -DnsSettings $myDNS -VNetName $vnet
+</code></pre>
+
+<p>That should spin up a new machine that's domain-joined!</p>
+
+<h3>Setting up some users</h3>
+
+<p>While we're here - let's create some users in our new directory.  If you want to do this from your workstation (as opposed to on our domain-joined machine) you'll need to open an endpoint in Azure to your DC's 9389 port - the port that listens for AD web services.</p>
+
+<p>I've allowed accidental deletion of these OUs so I can easily delete them afterwards.</p>
+
+<pre><code>$secpw = ConvertTo-SecureString "{my domain admin password}" -AsPlainText -Force
+$cred = New-Object System.Management.Automation.PSCredential("{my domain admin}", $secpw)
+
+Write-Host "Connecting with admin account"
+
+New-ADOrganizationalUnit -Name "Nova Laboratories" -Path "DC={my domain},DC=com" -Server {my dc}.cloudapp.net -Credential $cred -ProtectedFromAccidentalDeletion  $false
+
+Write-Host "Created OU Nova Laboratories"
+
+New-ADOrganizationalUnit  -Name "Robots" -Path "OU=Nova Laboratories,DC={my domain},DC=com" -Server {my dc}.cloudapp.net -Credential $cred -ProtectedFromAccidentalDeletion $false
+
+Write-Host "Created OU Robots in Nova Laboratories"
+
+for($i = 1; $i -lt 101; $i++){
+New-ADUser "Johnny$i" `
+    -Path "OU=Robots,OU=Nova Laboratories,DC={my domain},DC=com" `
+    -DisplayName "Johnny $i" `
+    -GivenName "Johnny" `
+    -Surname $i `
+    -Company "Nova Laboratories" `
+    -Server {my dc}.cloudapp.net `
+    -Credential $cred
+
+    Write-Host "Creating User Johnny$i in Nova Laboratories Robots"
+}
+
+</code></pre>
+
+<p>You should now (hopefully) have a simple domain set up, with a joined machine and a group of users.</p>
       </section>
       <footer>
         <p><small>Hosted on GitHub Pages &mdash; Theme by <a href="https://github.com/orderedlist">orderedlist</a></small></p>
